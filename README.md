@@ -1,6 +1,6 @@
 # AVD Fast Sign Out
 
-A small **PowerShell 5.1** sign-out utility for **Azure Virtual Desktop (AVD)** that offers a confirmation dialog, optional **Fast Logoff**, silent operation (`-NoGUI`), and opt-in diagnostic logging. It can run directly as a `.ps1` file or be compiled separately with [PS2EXE](https://github.com/MScholtes/PS2EXE). **This repository contains source code only; no EXE is distributed.**
+A small **PowerShell 5.1** sign-out utility for **Azure Virtual Desktop (AVD)** that offers a confirmation dialog, optional **Fast Logoff**, silent operation (`-NoGUI`), and opt-in diagnostic logging. It can run directly as a `.ps1` file or be compiled separately with [PS2EXE](https://github.com/MScholtes/PS2EXE).
 
 The program signs out **the current user session**. It is not a tool for logging off other users.
 
