@@ -47,9 +47,10 @@ Use a GPO in the scope of your AVD session hosts and test with a non-administrat
 | Fast Logoff with confirmation | `-FastLogoff` |
 | Fast Logoff, immediate/no GUI | `-FastLogoff -NoGUI` |
 | Fast Logoff, no GUI and diagnostic logs | `-FastLogoff -NoGUI -EnableLogging` |
+| Fast Logoff, 10-second maximum disconnect wait | `-FastLogoff -DisconnectTimeoutSeconds 10` |
 | Normal Logoff, explicitly no logs | `-DisableLogging` |
 
-Logging is disabled by default. `-DisableLogging` overrides `-EnableLogging` if both are passed.
+Logging is disabled by default. `-DisableLogging` overrides `-EnableLogging` if both are passed. When enabled, logs are saved in `%LOCALAPPDATA%\AVDFastSignOut\Logs` for the signed-in user. Disconnect-state polling defaults to an 8-second maximum (1-30 seconds configurable).
 
 ## 4. Optional PS2EXE compilation
 
@@ -58,7 +59,7 @@ Compiling is **not required**. If desired, run the following from the repository
 ```powershell
 Install-Module ps2exe -Scope CurrentUser
 Import-Module ps2exe
-Invoke-ps2exe -inputFile '.\src\AVDFastSignOut.ps1' -outputFile '.\AVDFastSignOut.exe' -noConsole -STA -x64 -title 'AVD Fast Sign Out' -version '1.0.0.0'
+Invoke-ps2exe -inputFile '.\src\AVDFastSignOut.ps1' -outputFile '.\AVDFastSignOut.exe' -noConsole -STA -x64 -title 'AVD Fast Sign Out' -version '1.1.0.0'
 ```
 
 See the [PS2EXE project](https://github.com/MScholtes/PS2EXE) for its full command-line options.

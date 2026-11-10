@@ -1,102 +1,83 @@
 # AVD Fast Sign Out
 
-A small **PowerShell 5.1** sign-out utility for **Azure Virtual Desktop (AVD)** that offers a confirmation dialog, optional **Fast Logoff**, silent operation (`-NoGUI`), and opt-in diagnostic logging. It can run directly as a `.ps1` file or be compiled separately with [PS2EXE](https://github.com/MScholtes/PS2EXE).
+PowerShell 5.1 utility for signing out the current **Azure Virtual Desktop (AVD)** session. Supports standard Windows logoff, optional **Fast Logoff**, confirmation preferences, unattended execution, and opt-in diagnostics.
 
-The program signs out **the current user session**. It is not a tool for logging off other users.
-
-## Features
-
-- **Normal Logoff by default** via Windows `logoff.exe`.
-- Optional **Fast Logoff**: disconnect the current AVD session, then request normal Windows logoff from a same-user background worker.
-- Windows-standard confirmation window with **Sign out** / **Cancel**.
-- **Do not show this confirmation again** stored per user, with a documented reset command.
-- **`-NoGUI`** for immediate sign-out without displaying or consulting the confirmation dialog.
-- Optional per-run logging to `C:\Temp`.
-- Safe, non-destructive preview mode.
-- Compatible with launching from a Start Menu shortcut, Group Policy Preferences, or directly from PowerShell.
+**Source only.** Run the `.ps1` directly or package it with [PS2EXE](https://github.com/MScholtes/PS2EXE).
 
 ## Requirements
 
-- Windows 10/11 or Windows Server supporting RDS sessions; intended for an interactive AVD user session.
-- **Windows PowerShell 5.1** and .NET Framework Windows Forms (for the confirmation window).
-- Run **as the signed-in user**, without elevation. Do not run as `SYSTEM` or from a non-interactive scheduled task.
-- If enabled, logging needs write access to `C:\Temp`. Logging failure does not block sign-out.
+- Windows PowerShell 5.1 and an interactive AVD/RDS user session.
+- Windows Forms for the optional confirmation dialog.
+- Run in the signed-in user's context; elevation is not required.
+- Write access to the user profile for optional logging.
 
-## Quick start
-
-Run in **Windows PowerShell 5.1**. Save any unsaved work before using a real sign-out command.
+## Usage
 
 ```powershell
-# Safe preview: no disconnect or sign-out
-powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\src\AVDFastSignOut.ps1 -Mode Preview
+# Standard logoff with confirmation
+.\src\AVDFastSignOut.ps1
 
-# Normal Windows logoff (default) with confirmation
-powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\src\AVDFastSignOut.ps1
+# Standard logoff, no dialog
+.\src\AVDFastSignOut.ps1 -NoGUI
 
-# Normal logoff without confirmation: immediate sign-out
-powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\src\AVDFastSignOut.ps1 -NoGUI
+# Disconnect, confirm session state, then log off
+.\src\AVDFastSignOut.ps1 -FastLogoff
 
-# Fast Logoff with diagnostics and no confirmation
-powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\src\AVDFastSignOut.ps1 -FastLogoff -NoGUI -EnableLogging
+# Fast Logoff with custom disconnect timeout and diagnostics
+.\src\AVDFastSignOut.ps1 -FastLogoff -NoGUI -EnableLogging -DisconnectTimeoutSeconds 10
 
-# Non-destructive smoke test for all three flags
-powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\src\AVDFastSignOut.ps1 -Mode Preview -FastLogoff -NoGUI -EnableLogging
+# Non-destructive check
+.\src\AVDFastSignOut.ps1 -Mode Preview -EnableLogging
 ```
 
-### Command-line options
-
-| Option | What it does |
+| Parameter | Behavior |
 |---|---|
-| *(none)* | Normal logoff. Show confirmation unless the user previously opted out. No logging. |
-| `-FastLogoff` | Disconnect the current session first, then request Windows logoff. |
-| `-NoGUI` | Skip the dialog and **immediately start sign-out**. Takes precedence over the stored confirmation preference. |
-| `-EnableLogging` | Create a log in `C:\Temp`. Off by default. |
-| `-DisableLogging` | Force logging off, even if `-EnableLogging` was supplied. |
-| `-Mode Preview` | **Never disconnects or logs off**. With GUI, shows a preview dialog; combined with `-NoGUI`, only performs validation/logging. |
+| `-FastLogoff` | Disconnect the session before initiating Windows logoff. |
+| `-NoGUI` | Bypass confirmation; does not enable Fast Logoff. |
+| `-EnableLogging` | Write a per-run diagnostic log to `%LOCALAPPDATA%\AVDFastSignOut\Logs`. |
+| `-DisconnectTimeoutSeconds` | Fast Logoff session-state wait limit; default `8`, range `1`–`30` seconds. |
+| `-DisableLogging` | Disable logging; overrides `-EnableLogging`. |
+| `-Mode Preview` | Run without disconnecting or logging off. |
 
-`-NoGUI` and `-FastLogoff` are independent: `-NoGUI` **does not** enable Fast Logoff. To use both, pass both flags.
+Without arguments, the application uses standard Windows logoff with confirmation and logging disabled.
 
-`-Mode Worker`, `-ExpectedSessionId`, and `-LogFile` are internal implementation details, **not** configuration options for user shortcuts.
+## Execution flow
 
-## How it works
+| Standard Logoff | Fast Logoff |
+|---|---|
+| Optional confirmation | Optional confirmation |
+| Execute `logoff.exe` | Launch a worker in the same user session |
+| Windows terminates the session | `WTSDisconnectSession` disconnects the client |
+| FSLogix handles profile unload and VHDX detach | Poll `WTSConnectState` until `WTSDisconnected`, then call `WTSLogoffSession` |
+| Connection closes as logoff completes | Windows and FSLogix finish logoff after disconnect |
 
-**Normal Logoff:** Confirmation (unless suppressed) → `logoff.exe` → Windows ends session → FSLogix performs its normal profile unload/VHDX detach.
+Fast Logoff reduces **perceived disconnect time**, not Windows or FSLogix cleanup time. Session state is polled every 200 ms, up to the configured timeout. On timeout/query failure, normal logoff is still requested. An accepted disconnect/logoff request does not confirm completed profile cleanup. Rapid reconnection should be validated in the target environment.
 
-**Fast Logoff:** Confirmation (unless suppressed) → separate same-user worker → `WTSDisconnectSession` → approximately 1.5-second delay → `WTSLogoffSession` → Windows and FSLogix finish normal session cleanup.
+## Configuration and diagnostics
 
-**Important:** A disconnected session is **not** proof that Windows logoff or FSLogix VHDX detach has completed. Fast Logoff improves the *perceived* sign-out time; it does not accelerate FSLogix. Users who immediately reconnect may encounter a session or profile cleanup race. Thoroughly validate behavior in your environment before enabling it widely.
+The confirmation opt-out is stored per user:
 
-See [How It Works](docs/How-It-Works.md) for full sequence, error handling, and verification steps.
+`HKCU\Software\AVDFastSignOut\SkipConfirmation` (`DWORD = 1`)
 
-## Confirmation preferences
-
-When the user checks **Do not show this confirmation again** and selects **Sign out**, the application stores:
-
-`HKCU\Software\AVDFastSignOut\SkipConfirmation` (`DWORD` = `1`)
-
-To restore the confirmation:
+Reset the preference:
 
 ```powershell
-Remove-ItemProperty -Path 'HKCU:\Software\AVDFastSignOut' -Name 'SkipConfirmation' -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path 'HKCU:\Software\AVDFastSignOut' -Name SkipConfirmation -ErrorAction SilentlyContinue
 ```
 
-`-NoGUI` does not change this saved preference; it only bypasses confirmation for the current execution. Preview never saves the preference.
+With `-EnableLogging`, logs are written to:
 
-## Logging
+`%LOCALAPPDATA%\AVDFastSignOut\Logs\AVDFastSignOut_<user>_S<sessionId>_<timestamp>_<id>.log`
 
-Opt in with `-EnableLogging`. Each invocation writes a separate file in:
+Logs record invocation context, selected mode, disconnect/logoff requests, and errors. For completed profile operations, use the FSLogix Profile logs on the session host.
 
-`C:\Temp\AVDFastSignOut_<user>_S<sessionId>_<timestamp>_<id>.log`
+## Deployment
 
-Logs contain basic user/session identifiers, selected behavior, and whether disconnect/logoff **requests** were accepted. They do **not** confirm FSLogix completion; use the host's FSLogix logs for that. Treat log files as operational data and retain them only as needed.
+Deploy the source or your own packaged executable locally to session hosts. Use Group Policy Preferences to create a Start Menu shortcut, with optional switches in the shortcut's **Arguments** field.
 
-## Group Policy and Windows Start Menu
+See [GPO Deployment](docs/GPO-Deployment.md) for configuration examples and [How It Works](docs/How-It-Works.md) for the implementation details.
 
-For GPO shortcuts and sample arguments, see [GPO Deployment](docs/GPO-Deployment.md). A separate deployment is not required if you run the PowerShell file directly.
-
-## Optional PS2EXE build
-
-Use PS2EXE only if you want to create your own `.exe` locally. The application works as a PowerShell script without compiling it.
+### Optional PS2EXE build
 
 ```powershell
 Install-Module ps2exe -Scope CurrentUser
@@ -105,36 +86,12 @@ Import-Module ps2exe
 Invoke-ps2exe `
     -inputFile '.\src\AVDFastSignOut.ps1' `
     -outputFile '.\AVDFastSignOut.exe' `
-    -noConsole `
-    -STA `
-    -x64 `
+    -noConsole -STA -x64 `
     -title 'AVD Fast Sign Out' `
-    -description 'Azure Virtual Desktop session sign-out utility' `
-    -product 'AVD Fast Sign Out' `
-    -version '1.0.0.0'
+    -version '1.1.0.0'
 ```
 
-You can add `-iconFile '.\your-icon.ico'` to use your own icon. No icon assets or EXE binaries are included here. Note: PS2EXE is a script packager, not a security boundary; the script source can be extracted from a generated executable.
-
-## Security and limitations
-
-- Always save unsaved work first, especially when using `-NoGUI`.
-- A session disconnect is not a Windows logoff. A successful asynchronous API call is not a guarantee of completed cleanup.
-- This application does not force-kill FSLogix or detach profile disks.
-- The source is provided **as-is** and has not been executed in your AVD environment by this repository's publisher; validate with your own host pool, image, group policies, and FSLogix configuration.
-- Because `-NoGUI` logs off immediately, avoid placing it on an easily clicked shortcut unless that behavior is intentional.
-
-## Project layout
-
-```text
-AVD-Fast-SignOut/
-├── src/AVDFastSignOut.ps1
-├── docs/How-It-Works.md
-├── docs/GPO-Deployment.md
-├── README.md
-├── LICENSE
-└── .gitignore
-```
+No compiled binaries are distributed in this repository.
 
 ## License
 

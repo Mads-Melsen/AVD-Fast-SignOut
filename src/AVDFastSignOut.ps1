@@ -8,7 +8,8 @@
     separate same-user worker. No FSLogix disks are forcibly unmounted.
 
     -NoGUI skips confirmation completely and signs out immediately.
-    -EnableLogging writes diagnostics to C:\Temp.
+    -EnableLogging writes diagnostics to the current user's LocalAppData.
+    -DisconnectTimeoutSeconds bounds session-state polling in Fast Logoff.
     -Mode Preview is always non-destructive.
 .NOTES
     Windows PowerShell 5.1. Run as the interactive user, without elevation.
@@ -29,6 +30,8 @@ param(
     [switch]$NoGUI,
     [switch]$EnableLogging,
     [switch]$DisableLogging,
+    [ValidateRange(1, 30)]
+    [int]$DisconnectTimeoutSeconds = 8,
     [ValidateSet('GUI', 'Preview', 'Worker')]
     [string]$Mode = 'GUI',
     # Internal worker parameters. Do not set these in user shortcuts.
@@ -39,8 +42,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:SourceScriptPath = $PSCommandPath
 $script:RegistryPath = 'HKCU:\Software\AVDFastSignOut'
-$script:LogDirectory = 'C:\Temp'
-$script:DisconnectDelayMs = 1500
+$script:LogDirectory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AVDFastSignOut\Logs'
+$script:SessionStatePollMilliseconds = 200
 $script:LoggingEnabled = [bool]$EnableLogging -and -not [bool]$DisableLogging
 $script:ActiveLogPath = ''
 $script:ApplicationName = 'AVD Fast Sign Out'
@@ -103,7 +106,7 @@ function Start-FastLogoffWorker {
 
     $processPath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
     $processName = [System.IO.Path]::GetFileNameWithoutExtension($processPath)
-    $workerArguments = ('-Mode Worker -ExpectedSessionId {0}' -f $SessionId)
+    $workerArguments = ('-Mode Worker -ExpectedSessionId {0} -DisconnectTimeoutSeconds {1}' -f $SessionId, $DisconnectTimeoutSeconds)
 
     if ($script:LoggingEnabled -and $script:ActiveLogPath) {
         $workerArguments += (' -EnableLogging -LogFile "{0}"' -f $script:ActiveLogPath)
@@ -124,6 +127,33 @@ function Start-FastLogoffWorker {
     Write-Log "Starting background worker. Executable=$processPath SessionId=$SessionId"
     $worker = Start-Process -FilePath $processPath -ArgumentList $arguments -WindowStyle Hidden -PassThru -ErrorAction Stop
     if ($null -eq $worker) { throw 'The background worker could not be launched.' }
+}
+
+function Get-SessionConnectionState {
+    param([Parameter(Mandatory)][int]$SessionId)
+
+    # WTSConnectState (WTS_INFO_CLASS=8) returns a 32-bit WTS_CONNECTSTATE_CLASS value.
+    $buffer = [IntPtr]::Zero
+    $bytesReturned = 0
+    $ok = [AVDFastSignOutNative]::WTSQuerySessionInformation(
+        [IntPtr]::Zero, $SessionId, 8, [ref]$buffer, [ref]$bytesReturned
+    )
+    if (-not $ok) {
+        $errorCode = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "WTSQuerySessionInformation failed. Win32Error=$errorCode"
+    }
+
+    try {
+        if ($buffer -eq [IntPtr]::Zero -or $bytesReturned -lt 4) {
+            throw "WTSQuerySessionInformation returned invalid session-state data. BytesReturned=$bytesReturned"
+        }
+        return [System.Runtime.InteropServices.Marshal]::ReadInt32($buffer)
+    }
+    finally {
+        if ($buffer -ne [IntPtr]::Zero) {
+            [AVDFastSignOutNative]::WTSFreeMemory($buffer)
+        }
+    }
 }
 
 function Invoke-FastLogoffWorker {
@@ -153,7 +183,7 @@ function Invoke-FastLogoffWorker {
         return
     }
 
-    Write-Log "Worker started. Computer=$env:COMPUTERNAME User=$env:USERNAME SessionId=$sessionId PID=$PID"
+    Write-Log "Worker started. Computer=$env:COMPUTERNAME User=$env:USERNAME SessionId=$sessionId PID=$PID DisconnectTimeoutSeconds=$DisconnectTimeoutSeconds"
 
     if (-not ('AVDFastSignOutNative' -as [type])) {
         Add-Type -TypeDefinition @'
@@ -168,6 +198,13 @@ public static class AVDFastSignOutNative
     [DllImport("wtsapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool WTSLogoffSession(IntPtr hServer, int sessionId, bool wait);
+
+    [DllImport("wtsapi32.dll", EntryPoint = "WTSQuerySessionInformationW", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, int infoClass, out IntPtr buffer, out int bytesReturned);
+
+    [DllImport("wtsapi32.dll")]
+    public static extern void WTSFreeMemory(IntPtr buffer);
 }
 '@
     }
@@ -178,11 +215,32 @@ public static class AVDFastSignOutNative
     $disconnectError = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
 
     if ($disconnected) {
-        Write-Log 'Disconnect request accepted. Waiting before standard logoff.'
-        Start-Sleep -Milliseconds $script:DisconnectDelayMs
+        Write-Log "Disconnect request accepted. Checking session state (timeout=${DisconnectTimeoutSeconds}s)."
+        $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $disconnectObserved = $false
+
+        while ($stopwatch.Elapsed.TotalSeconds -lt $DisconnectTimeoutSeconds) {
+            try {
+                $state = Get-SessionConnectionState -SessionId $sessionId
+                if ($state -eq 4) { # WTSDisconnected
+                    $disconnectObserved = $true
+                    Write-Log "Session is WTSDisconnected. ElapsedMs=$($stopwatch.ElapsedMilliseconds)"
+                    break
+                }
+            }
+            catch {
+                Write-Log "Session-state query failed: $($_.Exception.Message). Continuing to normal logoff." 'WARN'
+                break
+            }
+            Start-Sleep -Milliseconds $script:SessionStatePollMilliseconds
+        }
+
+        if (-not $disconnectObserved) {
+            Write-Log "Disconnected state was not confirmed within the configured timeout. Continuing to normal logoff. ElapsedMs=$($stopwatch.ElapsedMilliseconds)" 'WARN'
+        }
     }
     else {
-        Write-Log "Disconnect failed. Win32Error=$disconnectError. Continuing to logoff." 'WARN'
+        Write-Log "Disconnect failed. Win32Error=$disconnectError. Continuing to normal logoff." 'WARN'
     }
 
     Write-Log 'Requesting Windows logoff. FSLogix is handled by Windows.'
@@ -283,7 +341,7 @@ try {
 
     $sessionId = Get-CurrentSessionId
     $method = if ($FastLogoff) { 'Fast' } else { 'Normal' }
-    Write-Log "Start. Version=1.0 Mode=$Mode Method=$method NoGUI=$NoGUI Computer=$env:COMPUTERNAME User=$env:USERNAME SessionId=$sessionId PID=$PID"
+    Write-Log "Start. Version=1.1 Mode=$Mode Method=$method NoGUI=$NoGUI DisconnectTimeoutSeconds=$DisconnectTimeoutSeconds Computer=$env:COMPUTERNAME User=$env:USERNAME SessionId=$sessionId PID=$PID"
 
     if ($sessionId -le 0) {
         throw 'Run this application inside an interactive user session, not as SYSTEM or in Session 0.'
