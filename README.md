@@ -94,7 +94,7 @@ Logs contain basic user/session identifiers, selected behavior, and whether disc
 
 For GPO shortcuts and sample arguments, see [GPO Deployment](docs/GPO-Deployment.md). A separate deployment is not required if you run the PowerShell file directly.
 
-## Optional PS2EXE build (not supplied)
+## Optional PS2EXE build
 
 Use PS2EXE only if you want to create your own `.exe` locally. The application works as a PowerShell script without compiling it.
 
