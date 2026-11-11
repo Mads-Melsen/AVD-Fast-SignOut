@@ -7,7 +7,7 @@ PowerShell 5.1 utility for signing out the current **Azure Virtual Desktop (AVD)
 ## Requirements
 
 - Windows PowerShell 5.1 and an interactive AVD/RDS user session.
-- Windows Forms for the optional confirmation dialog.
+- Windows Forms for the optional confirmation dialog. (Sorry about the ugly GUI)
 - Run in the signed-in user's context; elevation is not required.
 - Write access to the user profile for optional logging.
 
