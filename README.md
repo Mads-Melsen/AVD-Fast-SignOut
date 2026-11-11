@@ -1,8 +1,9 @@
 # AVD Fast Sign Out
 
-PowerShell 5.1 utility for signing out the current **Azure Virtual Desktop (AVD)** session. Supports standard Windows logoff, optional **Fast Logoff**, confirmation preferences, unattended execution, and opt-in diagnostics.
+PowerShell 5.1 utility for signing out the current Azure Virtual Desktop (AVD) session. Supports standard Windows logoff, optional Fast Logoff, confirmation preferences, unattended execution, and opt-in diagnostics.
 
-**Source only.** Run the `.ps1` directly or package it with [PS2EXE](https://github.com/MScholtes/PS2EXE).
+The Fast Logoff functionality was inspired by Citrix Workspace Environment Management (WEM), which provides a similar feature to disconnect users immediately while the Windows logoff process continues in the background. This project brings the same concept to Azure Virtual Desktop.
+
 
 ## Requirements
 
