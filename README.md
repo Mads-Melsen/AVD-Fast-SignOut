@@ -1,14 +1,15 @@
 # AVD Fast Sign Out
 
-PowerShell 5.1 utility for signing out the current Azure Virtual Desktop (AVD) session. Supports standard Windows logoff, optional Fast Logoff, confirmation preferences, unattended execution, and opt-in diagnostics.
+PowerShell 5.1 utility for signing out the current **Azure Virtual Desktop (AVD)** session. Supports standard Windows logoff, optional **Fast Logoff**, confirmation preferences, unattended execution, and opt-in diagnostics.
 
-The Fast Logoff functionality was inspired by Citrix Workspace Environment Management (WEM), which provides a similar feature to disconnect users immediately while the Windows logoff process continues in the background. This project brings the same concept to Azure Virtual Desktop.
+The Fast Logoff approach was inspired by **Citrix WEM Fast Logoff**: disconnect the client first, then complete Windows logoff.
 
+**Source only.** Run the `.ps1` directly or package it with [PS2EXE](https://github.com/MScholtes/PS2EXE).
 
 ## Requirements
 
 - Windows PowerShell 5.1 and an interactive AVD/RDS user session.
-- Windows Forms for the optional confirmation dialog. (Sorry about the ugly GUI)
+- Windows Forms for the optional confirmation dialog.
 - Run in the signed-in user's context; elevation is not required.
 - Write access to the user profile for optional logging.
 
@@ -53,6 +54,16 @@ Without arguments, the application uses standard Windows logoff with confirmatio
 | Connection closes as logoff completes | Windows and FSLogix finish logoff after disconnect |
 
 Fast Logoff reduces **perceived disconnect time**, not Windows or FSLogix cleanup time. Session state is polled every 200 ms, up to the configured timeout. On timeout/query failure, normal logoff is still requested. An accepted disconnect/logoff request does not confirm completed profile cleanup. Rapid reconnection should be validated in the target environment.
+
+## Minimal Fast Logoff example
+
+[`examples/FastLogoff-Minimal.ps1`](examples/FastLogoff-Minimal.ps1) provides the standalone disconnect-then-logoff sequence without UI, logging, or configuration.
+
+```powershell
+.\examples\FastLogoff-Minimal.ps1
+```
+
+The script starts a hidden PowerShell worker in the current session, calls `WTSDisconnectSession`, waits 1.5 seconds, then requests `WTSLogoffSession`. If an API call fails, it falls back to `logoff.exe`. Windows and FSLogix handle normal session and profile cleanup. The fixed wait is a simple timing heuristic, not confirmation of a completed disconnect.
 
 ## Configuration and diagnostics
 
